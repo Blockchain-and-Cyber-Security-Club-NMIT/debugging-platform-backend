@@ -14,3 +14,5 @@ pin-project-lite = "0.2"
 log = "0.4"
 pretty_env_logger = "0.5"
 bytes = "1"
+wait-timeout = "0.2"
+uuid = { version = "1.8.0", features = ["v4"] }
