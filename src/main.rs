@@ -1,7 +1,10 @@
 #![deny(warnings)]
+mod cleanup;
+mod execute_code;
 mod tokiort;
 
 use std::convert::Infallible;
+use std::io::{self, Write};
 use std::net::SocketAddr;
 
 use bytes::Bytes;
@@ -15,8 +18,41 @@ use crate::tokiort::{TokioIo, TokioTimer};
 
 // An async function that consumes a request, does nothing with it and returns a
 // response.
-async fn hello(_: Request<impl hyper::body::Body>) -> Result<Response<Full<Bytes>>, Infallible> {
-    Ok(Response::new(Full::new(Bytes::from("👍"))))
+async fn hello(req: Request<impl hyper::body::Body>) -> Result<Response<Full<Bytes>>, Infallible> {
+    println!("Received a request with URI: {}", req.uri()); // Log the request URI
+
+    match req.uri().path() {
+        "/" => {
+            // Let's assume your `execute_code` handles other operations
+            match execute_code::execute_code().await {
+                Ok(output) => Ok(Response::new(Full::new(Bytes::from(output)))),
+                Err(err) => Ok(Response::new(Full::new(Bytes::from(format!(
+                    "Error: {:?}",
+                    err
+                ))))),
+            }
+        }
+        "/cleanup" => {
+            cleanup::remove_containers().await;
+            Ok(Response::new(Full::new(Bytes::from("👍"))))
+        }
+        "/logs" => {
+            let container_id = req.uri().query().unwrap_or("");
+            let container_logs = format!("docker logs {}", container_id);
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(container_logs)
+                .output()
+                .expect("Failed to execute command");
+            io::stdout().write_all(&output.stdout).unwrap();
+            let output = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            Ok(Response::new(Full::new(Bytes::from(output))))
+        }
+        _ => Ok(Response::builder() // Handle requests to other paths
+            .status(404)
+            .body(Full::new(Bytes::from("Not Found")))
+            .unwrap()),
+    }
 }
 
 #[tokio::main]
