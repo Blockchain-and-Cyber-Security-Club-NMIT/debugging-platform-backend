@@ -7,12 +7,18 @@ use std::time::Duration;
 use uuid::Uuid;
 use wait_timeout::ChildExt; // Import the wait_timeout extension.
 
-pub async fn execute_code() -> io::Result<String> {
+pub async fn execute_code(code: &str) -> io::Result<String> {
     let temp_dir = env::temp_dir();
     let uuid = Uuid::new_v4();
     let new_dir_path = temp_dir.join(uuid.to_string());
     fs::create_dir(&new_dir_path).expect("Failed to create directory");
-    let container_id_command = "docker create -m 256m --memory-swap 256m -v /home/hackerboy/develop/web3/bcc-nmit/anadyanta-2024/java-image:/data 860x9/java-executor";
+    fs::write(new_dir_path.join(path::Path::new("Solution.java")), code).unwrap();
+    let container_id_command = format!(
+        "docker create -m 256m --memory-swap 256m -v {}:/data 860x9/java-executor",
+        new_dir_path
+            .to_str()
+            .expect("Failed to convert path to string")
+    );
 
     let container_id_output = Command::new("sh")
         .arg("-c")

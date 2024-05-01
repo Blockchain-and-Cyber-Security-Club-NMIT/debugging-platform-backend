@@ -1,6 +1,7 @@
 #![deny(warnings)]
 mod cleanup;
 mod execute_code;
+mod parse_body;
 mod tokiort;
 
 use std::convert::Infallible;
@@ -11,9 +12,10 @@ use bytes::Bytes;
 use http_body_util::Full;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{Request, Response};
+use hyper::{Method, Request, Response};
 use tokio::net::TcpListener;
 
+use crate::parse_body::parse_body_service;
 use crate::tokiort::{TokioIo, TokioTimer};
 
 // An async function that consumes a request, does nothing with it and returns a
@@ -21,10 +23,9 @@ use crate::tokiort::{TokioIo, TokioTimer};
 async fn hello(req: Request<impl hyper::body::Body>) -> Result<Response<Full<Bytes>>, Infallible> {
     println!("Received a request with URI: {}", req.uri()); // Log the request URI
 
-    match req.uri().path() {
-        "/" => {
-            // Let's assume your `execute_code` handles other operations
-            match execute_code::execute_code().await {
+    match (req.method(), req.uri().path()) {
+        (&Method::GET, "/") => {
+            match execute_code::execute_code("public class Solution{public static void main(String args[]){System.out.println(\"Hello World\");}}").await {
                 Ok(output) => Ok(Response::new(Full::new(Bytes::from(output)))),
                 Err(err) => Ok(Response::new(Full::new(Bytes::from(format!(
                     "Error: {:?}",
@@ -32,11 +33,11 @@ async fn hello(req: Request<impl hyper::body::Body>) -> Result<Response<Full<Byt
                 ))))),
             }
         }
-        "/cleanup" => {
+        (&Method::GET, "/cleanup") => {
             cleanup::remove_containers().await;
             Ok(Response::new(Full::new(Bytes::from("👍"))))
         }
-        "/logs" => {
+        (&Method::GET, "/logs") => {
             let container_id = req.uri().query().unwrap_or("");
             let container_logs = format!("docker logs {}", container_id);
             let output = std::process::Command::new("sh")
@@ -66,6 +67,19 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(addr).await?;
     println!("Listening on http://{}", addr);
     loop {
+        let (tcp, _) = listener.accept().await?;
+        let io = TokioIo::new(tcp);
+        tokio::task::spawn(async move {
+            // Handle the connection from the client using HTTP1 and pass any
+            // HTTP requests received on that connection to the `hello` function
+            if let Err(err) = http1::Builder::new()
+                .timer(TokioTimer)
+                .serve_connection(io, service_fn(parse_body_service))
+                .await
+            {
+                println!("Error serving connection: {:?}", err);
+            }
+        });
         // When an incoming TCP connection is received grab a TCP stream for
         // client<->server communication.
         //
